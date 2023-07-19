@@ -6,6 +6,8 @@
 #include <unistd.h>
 
 #define BUFFER_SIZE 4096
+#define CMD_BUFFER_SIZE 256
+#define SLEEP_SECONDS 5
 
 static void start_game(char **arguments)
 {
@@ -52,6 +54,33 @@ static int get_crash_pid(char *buffer)
         return 0;
     }
     return atoi(ptr + 4);
+}
+
+static void read_cmdline(int pid, char *cmdline)
+{
+    sprintf(cmdline, "/proc/%d/cmdline", pid);
+    int fd = open(cmdline, O_RDONLY);
+    if (fd == -1) {
+        *cmdline = '\0';
+        return;
+    }
+    ssize_t bytes = read(fd, cmdline, CMD_BUFFER_SIZE - 1);
+    if (bytes < 0) {
+        bytes = 0;
+    }
+    cmdline[bytes] = '\0';
+    close(fd);
+}
+
+static void sigkill_if_alive(int pid, char *cmdline)
+{
+    char current[CMD_BUFFER_SIZE];
+    read_cmdline(pid, current);
+    if (strcmp(cmdline, current) == 0) {
+        printf("PID %d (%s) didn't die! Sending SIGKILL...\n", pid, cmdline);
+        kill(pid, SIGKILL);
+        sleep(SLEEP_SECONDS);
+    }
 }
 
 int main(int argc, char **argv)
@@ -103,10 +132,13 @@ int main(int argc, char **argv)
         buffer[bytes_read] = '\0';
         int pid = get_crash_pid(buffer);
         if (pid > 0) {
-            printf("Xid detected for PID %d. Sending SIGTERM...\n", pid);
+            char cmdline[CMD_BUFFER_SIZE];
+            read_cmdline(pid, cmdline);
+            printf("Xid detected for PID %d (%s). Sending SIGTERM...\n", pid, cmdline);
             kill(pid, SIGTERM);
+            sleep(SLEEP_SECONDS);
+            sigkill_if_alive(pid, cmdline);
             if (game_arguments != NULL) {
-                sleep(5);
                 start_game(game_arguments);
             }
         }
